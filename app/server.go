@@ -62,7 +62,21 @@ func handleConnection(conn net.Conn, kvstore *storage.KeyValueStore) {
 }
 
 func handleSet(args []string, kvstore *storage.KeyValueStore) string {
-	kvstore.Set(args[0], args[1])
+	var timeValid int64
+	var err error
+	if len(args) != 2 {
+		if len(args) != 4  || strings.ToUpper(args[2]) != "PX" {
+			return "-ERR unknown command \r\n"
+		}
+		timeValid, err = strconv.ParseInt(args[3], 10, 64)
+		fmt.Println(timeValid)
+		if err != nil {
+			return "-ERR occurred \r\n"
+		}
+	} else {
+		timeValid = -1
+	}
+	kvstore.Set(args[0], args[1], timeValid)
 	return buildSimpleString("OK")
 }
 

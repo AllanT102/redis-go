@@ -6,12 +6,14 @@ import (
     "io/ioutil"
     "os"
     "sync"
+    "time"
 )
 
 // KeyValueStore struct will hold the in-memory data and a mutex for concurrency control
 type KeyValueStore struct {
     sync.Mutex
     store map[string]string
+    expiration map[string]int64
     filePath string
 }
 
@@ -19,6 +21,7 @@ type KeyValueStore struct {
 func NewKeyValueStore(filePath string) *KeyValueStore {
     kv := &KeyValueStore{
         store:    make(map[string]string),
+        expiration: make(map[string]int64),
         filePath: filePath,
     }
     kv.Load() // Load existing data from file if it exists
@@ -26,9 +29,14 @@ func NewKeyValueStore(filePath string) *KeyValueStore {
 }
 
 // Set a key with a value in the KeyValueStore
-func (kv *KeyValueStore) Set(key, value string) {
+func (kv *KeyValueStore) Set(key, value string, timeValid int64) {
     kv.Lock()
     kv.store[key] = value
+    expirationTime := timeValid
+    if timeValid != -1 {
+        expirationTime += time.Now().UnixMilli()
+    }
+    kv.expiration[key] = expirationTime
     kv.Unlock()
     kv.Save() // Save after each set
 }
@@ -37,6 +45,15 @@ func (kv *KeyValueStore) Set(key, value string) {
 func (kv *KeyValueStore) Get(key string) (string, bool) {
     kv.Lock()
     value, ok := kv.store[key]
+    if ok {
+        expTime, _ := kv.expiration[key]
+        if expTime != -1 && time.Now().After(time.UnixMilli(expTime)) {
+            kv.Unlock()
+            kv.Delete(key)
+            kv.Lock()
+            value, ok = "", false
+        }
+    }
     kv.Unlock()
     return value, ok
 }
@@ -45,6 +62,7 @@ func (kv *KeyValueStore) Get(key string) (string, bool) {
 func (kv *KeyValueStore) Delete(key string) {
     kv.Lock()
     delete(kv.store, key)
+    delete(kv.expiration, key)
     kv.Unlock()
     kv.Save() // Save after deletion
 }
