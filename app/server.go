@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"strconv"
 	"errors"
+	"redis-go/app/storage"
 )
 
 func main() {
@@ -21,17 +22,19 @@ func main() {
 		os.Exit(1)
 	}
 	defer l.Close()
+
+	kvstore := storage.NewKeyValueStore("./data/kvstore.json")
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			os.Exit(1)
 		}
-		go handleConnection(conn)
+		go handleConnection(conn, kvstore)
 	}
 }
 
 // handleConnection reads commands from the client, processes them and sends responses.
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, kvstore *storage.KeyValueStore) {
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
@@ -48,9 +51,27 @@ func handleConnection(conn net.Conn) {
 		case "PING":
 			fmt.Fprintf(conn, buildBulkString([]string{"PONG"}))
 			break
+		case "SET":
+			fmt.Fprintf(conn, handleSet(args[1:], kvstore))
+		case "GET":
+			fmt.Fprintf(conn, handleGet(args[1], kvstore))
 		default:
 			fmt.Fprintf(conn, "-ERR unknown command '%s'\r\n", args[0])
 		}
+	}
+}
+
+func handleSet(args []string, kvstore *storage.KeyValueStore) string {
+	kvstore.Set(args[0], args[1])
+	return buildSimpleString("OK")
+}
+
+func handleGet(key string, kvstore *storage.KeyValueStore) string {
+	value, valid := kvstore.Get(key)
+	if !valid {
+		return buildNullBulkString()
+	} else {
+		return buildBulkString([]string{value})
 	}
 }
 		
@@ -81,13 +102,21 @@ func parseRESPCommand(scanner *bufio.Scanner) ([]string, error) {
 	return results, nil
 }
 
+func buildSimpleString(data string) string {
+	return fmt.Sprintf("+%s\r\n", data)
+}
+
 func buildBulkString(data []string) string {
 	bulkString := ""
 	for _, arg := range data {
 		bulkString += fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg)
 	}
 	return bulkString
-} 
+}
+
+func buildNullBulkString() string {
+	return "$-1\r\n"
+}
 
 // $4\r\nECHO -> [$4, ECHO] -> doesn't account for ECHO\r\n being a string
 func parseBulkString(parts []string, currPart int) string {
